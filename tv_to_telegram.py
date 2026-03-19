@@ -1,11 +1,12 @@
 from flask import Flask, request
 import requests
+import os
 
 app = Flask(__name__)
 
-# --- CONFIGURACIÓN ---
-TELEGRAM_TOKEN = "8615423318:AAHI1VLoVZ766AZA2kt1j8KblMEqPJA1KUs"       # El token de tu bot de Telegram
-TELEGRAM_CHAT_ID = "1965706706"        # Tu Chat ID
+# --- CONFIGURACIÓN (desde variables de entorno de Render) ---
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 # --- WEBHOOK ---
 @app.route("/webhook", methods=["POST"])
