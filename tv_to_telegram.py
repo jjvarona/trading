@@ -17,7 +17,9 @@ def webhook():
     data = request.get_data(as_text=True)
     send_telegram(data)
     return "ok", 200
-
+@app.route("/", methods=["GET", "HEAD"])
+def root():
+    return "ok", 200
 # --- KEEP ALIVE ---
 @app.route("/ping", methods=["GET"])
 def ping():
