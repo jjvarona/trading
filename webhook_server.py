@@ -1,6 +1,6 @@
 import os, threading, time, requests
 from flask import Flask, request
-from parser import parse_alert
+from signal_parser import parse_alert
 from bitget import open_order
 
 app = Flask(__name__)
