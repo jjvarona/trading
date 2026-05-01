@@ -298,7 +298,7 @@ def _do_order(chat_id, sig_id, usdt):
             f"Entrada: {result['entry']}\nTamano : {result['size']} contratos\n"
             f"USDT   : {result['usdt']}\nTP2    : {result['tp2']}\nSL     : {result['sl']}\n"
             f"ID: {result['orderId']}")
-            if signal.get("signal_type") == "BOS_FORM":
+    if signal.get("signal_type") == "BOS_FORM":
             tid = f"{signal['symbol']}_{signal['direction']}_{int(time.time())}"
             _open_bos_form_trades[tid] = {
                 "symbol":     signal["symbol"],
