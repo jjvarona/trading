@@ -1,5 +1,5 @@
 from flask import Flask, request
-import requests, re, json, os, hmac, hashlib, base64, time, math
+import requests, re, json, os, hmac, hashlib, base64, time, math, threading
 
 app = Flask(__name__)
 
@@ -180,12 +180,34 @@ def edit_msg(chat_id, msg_id, text):
 # ── Estado en memoria ─────────────────────────────────────────
 _pending = {}
 _counter = 0
+_open_bos_form_trades = {}  # {tid: {symbol, direction, bos_level, alert_time}}
 
 def _next_id():
     global _counter
     _counter += 1
     return f"s{_counter}"
-
+def monitor_bos_form():
+    while True:
+        time.sleep(600)
+        now = time.time()
+        for tid, t in list(_open_bos_form_trades.items()):
+            try:
+                pos = _get(f"/api/v2/mix/position/single-position?symbol={t['symbol']}&productType=USDT-FUTURES&marginCoin=USDT")
+                if not pos.get("data") or float(pos["data"][0]["total"]) == 0:
+                    _open_bos_form_trades.pop(tid, None)
+                    continue
+                precio = float(pos["data"][0]["marketPrice"])
+                llegó_bos = (t["direction"] == "LONG" and precio >= t["bos_level"]) or \
+                            (t["direction"] == "SHORT" and precio <= t["bos_level"])
+                if llegó_bos:
+                    _open_bos_form_trades.pop(tid, None)
+                elif now - t["alert_time"] >= 7200:
+                    send_message(TELEGRAM_CHAT_ID,
+                        f"⚠️ <b>{t['symbol']} {t['direction']}</b> lleva 2h sin llegar al BOS {t['bos_level']}."
+                        f"\nPrecio actual: <code>{precio}</code>")
+                    _open_bos_form_trades.pop(tid, None)
+            except Exception as e:
+                print(f"[MONITOR] Error {t['symbol']}: {e}")
 # ── Webhook TradingView ───────────────────────────────────────
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -276,6 +298,14 @@ def _do_order(chat_id, sig_id, usdt):
             f"Entrada: {result['entry']}\nTamano : {result['size']} contratos\n"
             f"USDT   : {result['usdt']}\nTP2    : {result['tp2']}\nSL     : {result['sl']}\n"
             f"ID: {result['orderId']}")
+            if signal.get("signal_type") == "BOS_FORM":
+            tid = f"{signal['symbol']}_{signal['direction']}_{int(time.time())}"
+            _open_bos_form_trades[tid] = {
+                "symbol":     signal["symbol"],
+                "direction":  signal["direction"],
+                "bos_level":  signal["bos_level"],
+                "alert_time": time.time()
+            }
     else:
         send_message(chat_id, f"Error Bitget: {result['error']}")
 
@@ -300,4 +330,5 @@ def register_webhook():
 
 if __name__ == "__main__":
     register_webhook()
+    threading.Thread(target=monitor_bos_form, daemon=True).start()
     app.run(host="0.0.0.0", port=5000)
