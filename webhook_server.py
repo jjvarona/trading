@@ -195,6 +195,10 @@ def webhook():
     if signal is None:
         send_message(TELEGRAM_CHAT_ID, raw)
         return "ok", 200
+    
+    # ── LIMPIA TODO LO ANTERIOR ──
+    _pending.clear()
+    
     sig_id = _next_id()
     _pending[sig_id] = signal
     d = signal["direction"]; sym = signal["symbol"]; tf = signal["timeframe"]
