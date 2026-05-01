@@ -275,34 +275,18 @@ def telegram_update():
     return "ok", 200
 def _cmd_posiciones(chat_id):
     try:
+        print(f"[POSICIONES] iniciando...")
         resp = _get("/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT")
-        print(f"[POSICIONES] {resp}")
+        print(f"[POSICIONES] resp: {resp}")
         positions = resp.get("data") or []
-        abiertas = [p for p in positions if float(p.get("total", 0)) > 0]
-        if not abiertas:
-            send_message(chat_id, "📭 No tienes posiciones abiertas.")
+        if not positions:
+            send_message(chat_id, f"📭 data vacío. Resp: {resp}")
             return
-        lines = ["📊 <b>Posiciones abiertas</b>\n──────────────────"]
-        for p in abiertas:
-            sym   = p.get("symbol", "?")
-            side  = "🟢 LONG" if p.get("holdSide") == "long" else "🔴 SHORT"
-            entry = p.get("openPriceAvg", "?")
-            size  = p.get("total", "?")
-            pnl   = float(p.get("unrealizedPL", 0))
-            ctime = int(p.get("cTime", 0)) / 1000
-            hora  = time.strftime("%H:%M %d/%m", time.localtime(ctime))
-            icon  = "🟩" if pnl >= 0 else "🟥"
-            lines.append(
-                f"{side} <b>{sym}</b>\n"
-                f"Entrada : {entry}\n"
-                f"Tamaño  : {size}\n"
-                f"PnL     : {icon} {pnl:.2f} USDT\n"
-                f"Abierta : {hora}\n──────────────────"
-            )
-        send_message(chat_id, "\n".join(lines))
+        # Sin filtro, muestra el primer elemento crudo para ver los campos
+        send_message(chat_id, f"🔍 Primer elemento:\n{positions[0]}")
     except Exception as e:
-        print(f"[POSICIONES] Error: {e}")
-        send_message(chat_id, f"⚠️ Error consultando posiciones: {e}")
+        send_message(chat_id, f"⚠️ Error: {e}")
+
 def _cmd_balance(chat_id):
     resp = _get("/api/v2/mix/account/account?productType=USDT-FUTURES&marginCoin=USDT")
     try:
