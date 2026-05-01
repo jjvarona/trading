@@ -270,32 +270,35 @@ def telegram_update():
             _do_order(chat_id, sig_id, amt)
     return "ok", 200
 def _cmd_posiciones(chat_id):
-    resp = _get("/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT")
-    print(f"[POSICIONES] resp: {resp}")
-    positions = resp.get("data", [])
-    abiertas = [p for p in positions if float(p.get("total", 0)) > 0]
-    if not abiertas:
-        send_message(chat_id, "📭 No tienes posiciones abiertas.")
-        return
-    lines = ["📊 <b>Posiciones abiertas</b>\n──────────────────"]
-    for p in abiertas:
-        sym     = p["symbol"]
-        side    = "🟢 LONG" if p["holdSide"] == "long" else "🔴 SHORT"
-        entry   = p["openPriceAvg"]
-        size    = p["total"]
-        pnl     = float(p.get("unrealizedPL", 0))
-        ctime   = int(p.get("cTime", 0)) / 1000
-        hora    = time.strftime("%H:%M %d/%m", time.localtime(ctime))
-        icon    = "🟩" if pnl >= 0 else "🟥"
-        lines.append(
-            f"{side} <b>{sym}</b>\n"
-            f"Entrada : {entry}\n"
-            f"Tamaño  : {size}\n"
-            f"PnL     : {icon} {pnl:.2f} USDT\n"
-            f"Abierta : {hora}\n──────────────────"
-        )
-    send_message(chat_id, "\n".join(lines))
-
+    try:
+        resp = _get("/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT")
+        print(f"[POSICIONES] {resp}")
+        positions = resp.get("data") or []
+        abiertas = [p for p in positions if float(p.get("total", 0)) > 0]
+        if not abiertas:
+            send_message(chat_id, "📭 No tienes posiciones abiertas.")
+            return
+        lines = ["📊 <b>Posiciones abiertas</b>\n──────────────────"]
+        for p in abiertas:
+            sym   = p.get("symbol", "?")
+            side  = "🟢 LONG" if p.get("holdSide") == "long" else "🔴 SHORT"
+            entry = p.get("openPriceAvg", "?")
+            size  = p.get("total", "?")
+            pnl   = float(p.get("unrealizedPL", 0))
+            ctime = int(p.get("cTime", 0)) / 1000
+            hora  = time.strftime("%H:%M %d/%m", time.localtime(ctime))
+            icon  = "🟩" if pnl >= 0 else "🟥"
+            lines.append(
+                f"{side} <b>{sym}</b>\n"
+                f"Entrada : {entry}\n"
+                f"Tamaño  : {size}\n"
+                f"PnL     : {icon} {pnl:.2f} USDT\n"
+                f"Abierta : {hora}\n──────────────────"
+            )
+        send_message(chat_id, "\n".join(lines))
+    except Exception as e:
+        print(f"[POSICIONES] Error: {e}")
+        send_message(chat_id, f"⚠️ Error consultando posiciones: {e}")
 def _cmd_balance(chat_id):
     resp = _get("/api/v2/mix/account/account?productType=USDT-FUTURES&marginCoin=USDT")
     try:
