@@ -216,7 +216,17 @@ def webhook():
         text = (f"{es} <b>SEÑAL {d}</b> · {sym} {tf}\nScore: {signal.get('score',0)}/100\n"
                 f"──────────────────\nEntrada : <b>{entry}</b>\nSL  : {sl}\n"
                 f"TP1 : {tp1}\nTP2 : {tp2}\nTP3 : {tp3}\n──────────────────\nOrden: <b>{lbl}</b>")
-    send_buttons(TELEGRAM_CHAT_ID, text, sig_id, d)
+    if signal["signal_type"] == "BOS_FORM":
+        tg_post("sendMessage", {
+            "chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML",
+            "reply_markup": {"inline_keyboard": [[
+                {"text": "⚡ Entrada ahora", "callback_data": f"entry:{sig_id}:market"},
+                {"text": "🎯 Nivel BOS",     "callback_data": f"entry:{sig_id}:limit"},
+                {"text": "❌ Cancelar",      "callback_data": f"cancel:{sig_id}"},
+            ]]}
+        })
+    else:
+        send_buttons(TELEGRAM_CHAT_ID, text, sig_id, d)
     return "ok", 200
 
 # ── Webhook Telegram ──────────────────────────────────────────
@@ -227,6 +237,18 @@ def telegram_update():
         cb = data["callback_query"]
         cb_id = cb["id"]; chat_id = str(cb["message"]["chat"]["id"])
         msg_id = cb["message"]["message_id"]; parts = cb.get("data","").split(":")
+        if parts[0] == "entry":
+            sig_id = parts[1]; entry_type = parts[2]
+            if sig_id not in _pending:
+                answer_cb(cb_id, "⚠️ Señal expirada"); return "ok", 200
+            # Ajusta el tipo de orden según lo elegido
+            _pending[sig_id]["order_type"] = entry_type
+            if entry_type == "limit":
+                _pending[sig_id]["entry_price"] = _pending[sig_id]["bos_level"]
+            answer_cb(cb_id, "👍 Elige importe")
+            edit_msg(chat_id, msg_id, cb["message"]["text"] + 
+             "\n\n⚡ Entrada a mercado" if entry_type == "market" else "\n\n🎯 Entrada en BOS")
+            send_amount_buttons(chat_id, sig_id)
         if parts[0] == "open":
             sig_id = parts[1]
             if sig_id not in _pending:
