@@ -255,15 +255,7 @@ def telegram_update():
         chat_id = str(data["message"]["chat"]["id"])
         text    = data["message"].get("text","").strip()
         key     = f"await_{chat_id}"
-            # ── Comandos ──────────────────────────────────────
-    if text == "/posiciones":
-        _cmd_posiciones(chat_id)
-        return "ok", 200
-
-    if text == "/balance":
-        _cmd_balance(chat_id)
-        return "ok", 200
-        
+     
         if key in _pending:
             sig_id = _pending.pop(key)
             try:
@@ -273,38 +265,6 @@ def telegram_update():
                 _pending[key] = sig_id; return "ok", 200
             _do_order(chat_id, sig_id, amt)
     return "ok", 200
-def _cmd_posiciones(chat_id):
-    try:
-        print(f"[POSICIONES] iniciando...")
-        resp = _get("/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT")
-        print(f"[POSICIONES] resp: {resp}")
-        positions = resp.get("data") or []
-        if not positions:
-            send_message(chat_id, f"📭 data vacío. Resp: {resp}")
-            return
-        # Sin filtro, muestra el primer elemento crudo para ver los campos
-        send_message(chat_id, f"🔍 Primer elemento:\n{positions[0]}")
-    except Exception as e:
-        send_message(chat_id, f"⚠️ Error: {e}")
-
-def _cmd_balance(chat_id):
-    resp = _get("/api/v2/mix/account/account?productType=USDT-FUTURES&marginCoin=USDT")
-    try:
-        data     = resp["data"]
-        total    = float(data["accountEquity"])
-        available = float(data["available"])
-        in_use   = float(data["locked"])
-        upnl     = float(data.get("unrealizedPL", 0))
-        icon     = "🟩" if upnl >= 0 else "🟥"
-        send_message(chat_id,
-            f"💰 <b>Balance Futuros USDT</b>\n──────────────────\n"
-            f"Total     : <b>{total:.2f} USDT</b>\n"
-            f"Disponible: {available:.2f} USDT\n"
-            f"En uso    : {in_use:.2f} USDT\n"
-            f"PnL abierto: {icon} {upnl:.2f} USDT"
-        )
-    except Exception:
-        send_message(chat_id, f"Error consultando balance: {resp.get('msg', str(resp))}")
         
 def _do_order(chat_id, sig_id, usdt):
     signal = _pending.pop(sig_id, None)
