@@ -271,6 +271,7 @@ def telegram_update():
     return "ok", 200
 def _cmd_posiciones(chat_id):
     resp = _get("/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT")
+    print(f"[POSICIONES] resp: {resp}")
     positions = resp.get("data", [])
     abiertas = [p for p in positions if float(p.get("total", 0)) > 0]
     if not abiertas:
