@@ -276,7 +276,7 @@ def _do_order(chat_id, sig_id, usdt):
             f"Entrada: {result['entry']}\nTamano : {result['size']} contratos\n"
             f"USDT   : {result['usdt']}\nTP2    : {result['tp2']}\nSL     : {result['sl']}\n"
             f"ID: {result['orderId']}")
-     else:
+    else:
         send_message(chat_id, f"Error Bitget: {result['error']}")
 
 @app.route("/ping",   methods=["GET"])
