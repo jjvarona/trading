@@ -247,6 +247,7 @@ def webhook():
                 f"Entrada ahora : <b>{entry}</b>\nNivel BOS     : {signal['bos_level']}\n"
                 f"──────────────────\nSL  : {sl}\nTP1 : {tp1}\nTP2 : {tp2}\nTP3 : {tp3}\n"
                 f"──────────────────\nOrden: <b>{lbl}</b>")
+        send_entry_buttons(TELEGRAM_CHAT_ID, text, sig_id)
     else:
         text = (f"{es} <b>SEÑAL {d}</b> · {sym} {tf}\nScore: {signal.get('score',0)}/100\n"
                 f"──────────────────\nEntrada : <b>{entry}</b>\nSL  : {sl}\n"
@@ -345,7 +346,7 @@ def _do_order(chat_id, sig_id, usdt):
     _executed.add(sig_id)
     signal = _pending.pop(sig_id, None)
     if not signal:
-        send_message(chat_id, "Señal no encontrada."); return
+    send_message(chat_id, "Señal no encontrada."); return
     send_message(chat_id, f"Enviando orden a Bitget ({usdt} USDT)...")
     result = open_order(signal, usdt)
     if result["ok"]:
