@@ -99,7 +99,7 @@ def open_order(signal, usdt_amount):
     entry      = signal["entry_price"]
     sl         = signal["sl"]
     tp         = signal["tp2"]
-    order_type = signal.get("order_type", "limit")
+    order_type = signal.get("order_type", "market")
 
     _post("/api/v2/mix/account/set-margin-mode", {
         "symbol": symbol, "productType": "USDT-FUTURES",
