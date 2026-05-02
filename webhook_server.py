@@ -155,7 +155,15 @@ def send_buttons(chat_id, text, sig_id, direction):
             {"text": "❌ Cancelar",                "callback_data": f"cancel:{sig_id}"},
         ]]}
     })
-
+def send_entry_buttons(chat_id, text, sig_id):
+    tg_post("sendMessage", {
+        "chat_id": chat_id, "text": text, "parse_mode": "HTML",
+        "reply_markup": {"inline_keyboard": [[
+            {"text": "⚡ Entrada ahora", "callback_data": f"entry:{sig_id}:market"},
+            {"text": "🎯 Nivel BOS",     "callback_data": f"entry:{sig_id}:limit"},
+            {"text": "❌ Cancelar",      "callback_data": f"cancel:{sig_id}"},
+        ]]}
+    })
 def send_amount_buttons(chat_id, sig_id):
     tg_post("sendMessage", {
         "chat_id": chat_id,
@@ -170,7 +178,31 @@ def send_amount_buttons(chat_id, sig_id):
              {"text":"✏️ Otro","callback_data":f"amount:{sig_id}:custom"}],
         ]}
     })
-
+def send_confirm_buttons(chat_id, sig_id, signal, usdt):
+    d = signal["direction"]
+    sym = signal["symbol"]
+    tf = signal["timeframe"]
+    tipo = "LÍMITE en BOS" if signal.get("order_type") == "limit" else "MERCADO"
+    entry = signal["entry_price"]
+    sl = signal["sl"]; tp2 = signal["tp2"]
+    e = "🟢" if d == "LONG" else "🔴"
+    text = (
+        f"⚠️ <b>Confirmar orden</b>\n──────────────────\n"
+        f"{e} {d} · {sym} {tf}\n"
+        f"Tipo    : <b>{tipo}</b>\n"
+        f"Entrada : {entry}\n"
+        f"SL      : {sl}\n"
+        f"TP2     : {tp2}\n"
+        f"USDT    : <b>{usdt}</b>\n"
+        f"──────────────────\n¿Confirmas?"
+    )
+    tg_post("sendMessage", {
+        "chat_id": chat_id, "text": text, "parse_mode": "HTML",
+        "reply_markup": {"inline_keyboard": [[
+            {"text": "✅ Confirmar", "callback_data": f"confirm:{sig_id}"},
+            {"text": "❌ Cancelar",  "callback_data": f"cancelconfirm:{sig_id}"},
+        ]]}
+    })
 def answer_cb(cb_id, text=""):
     tg_post("answerCallbackQuery", {"callback_query_id": cb_id, "text": text})
 
@@ -179,7 +211,9 @@ def edit_msg(chat_id, msg_id, text):
 
 # ── Estado en memoria ─────────────────────────────────────────
 _pending = {}
-_counter = 0
+_pending_confirm = {}
+_executed        = set()
+_counter         = 0
 
 def _next_id():
     global _counter
@@ -196,8 +230,9 @@ def webhook():
         send_message(TELEGRAM_CHAT_ID, raw)
         return "ok", 200
     
-    # ── LIMPIA TODO LO ANTERIOR ──
-    _pending.clear()
+  # Limpia solo el await y confirm activos, no las señales pendientes
+    _pending.pop(f"await_{TELEGRAM_CHAT_ID}", None)
+    _pending_confirm.pop(TELEGRAM_CHAT_ID, None)
     
     sig_id = _next_id()
     _pending[sig_id] = signal
@@ -216,16 +251,6 @@ def webhook():
         text = (f"{es} <b>SEÑAL {d}</b> · {sym} {tf}\nScore: {signal.get('score',0)}/100\n"
                 f"──────────────────\nEntrada : <b>{entry}</b>\nSL  : {sl}\n"
                 f"TP1 : {tp1}\nTP2 : {tp2}\nTP3 : {tp3}\n──────────────────\nOrden: <b>{lbl}</b>")
-    if signal["signal_type"] == "BOS_FORM":
-        tg_post("sendMessage", {
-            "chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML",
-            "reply_markup": {"inline_keyboard": [[
-                {"text": "⚡ Entrada ahora", "callback_data": f"entry:{sig_id}:market"},
-                {"text": "🎯 Nivel BOS",     "callback_data": f"entry:{sig_id}:limit"},
-                {"text": "❌ Cancelar",      "callback_data": f"cancel:{sig_id}"},
-            ]]}
-        })
-    else:
         send_buttons(TELEGRAM_CHAT_ID, text, sig_id, d)
     return "ok", 200
 
@@ -237,30 +262,35 @@ def telegram_update():
         cb = data["callback_query"]
         cb_id = cb["id"]; chat_id = str(cb["message"]["chat"]["id"])
         msg_id = cb["message"]["message_id"]; parts = cb.get("data","").split(":")
+
         if parts[0] == "entry":
             sig_id = parts[1]; entry_type = parts[2]
             if sig_id not in _pending:
                 answer_cb(cb_id, "⚠️ Señal expirada"); return "ok", 200
-            # Ajusta el tipo de orden según lo elegido
             _pending[sig_id]["order_type"] = entry_type
             if entry_type == "limit":
                 _pending[sig_id]["entry_price"] = _pending[sig_id]["bos_level"]
-            answer_cb(cb_id, "👍 Elige importe")
-            edit_msg(chat_id, msg_id, cb["message"]["text"] + 
-             "\n\n⚡ Entrada a mercado" if entry_type == "market" else "\n\n🎯 Entrada en BOS")
+            label = "⚡ Entrada a mercado" if entry_type == "market" else "🎯 Entrada en BOS"
+            answer_cb(cb_id, label)
+            edit_msg(chat_id, msg_id, cb["message"]["text"] + f"\n\n{label}")
             send_amount_buttons(chat_id, sig_id)
-        if parts[0] == "open":
+
+        elif parts[0] == "open":
             sig_id = parts[1]
             if sig_id not in _pending:
                 answer_cb(cb_id, "⚠️ Señal expirada"); return "ok", 200
             answer_cb(cb_id, "👍 Elige importe")
             edit_msg(chat_id, msg_id, cb["message"]["text"] + "\n\n✅ Confirmado")
             send_amount_buttons(chat_id, sig_id)
+
         elif parts[0] == "cancel":
             sig_id = parts[1]
-            _pending.pop(sig_id, None); _pending.pop(f"await_{chat_id}", None)
+            _pending.pop(sig_id, None)
+            _pending.pop(f"await_{chat_id}", None)
+            _pending_confirm.pop(chat_id, None)
             answer_cb(cb_id, "❌ Cancelado")
             edit_msg(chat_id, msg_id, cb["message"]["text"] + "\n\n❌ Cancelado")
+
         elif parts[0] == "amount" and len(parts) >= 3:
             sig_id = parts[1]; amount = parts[2]
             if sig_id not in _pending:
@@ -270,14 +300,32 @@ def telegram_update():
                 answer_cb(cb_id, "Escribe el importe")
                 send_message(chat_id, "Escribe el importe en USDT:")
             else:
-                answer_cb(cb_id, "Enviando...")
-                _do_order(chat_id, sig_id, float(amount))
+                _pending.pop(f"await_{chat_id}", None)
+                answer_cb(cb_id, "👍 Revisa y confirma")
+                _pending_confirm[chat_id] = {"sig_id": sig_id, "usdt": float(amount)}
+                send_confirm_buttons(chat_id, sig_id, _pending[sig_id], float(amount))
+
+        elif parts[0] == "confirm":
+            sig_id = parts[1]
+            entry = _pending_confirm.get(chat_id)
+            if not entry or entry["sig_id"] != sig_id:
+                answer_cb(cb_id, "⚠️ Confirmación expirada"); return "ok", 200
+            answer_cb(cb_id, "Enviando...")
+            _pending_confirm.pop(chat_id, None)
+            _do_order(chat_id, sig_id, entry["usdt"])
+
+        elif parts[0] == "cancelconfirm":
+            _pending_confirm.pop(chat_id, None)
+            answer_cb(cb_id, "❌ Cancelado")
+            edit_msg(chat_id, msg_id, cb["message"]["text"] + "\n\n❌ Cancelado")
+
         return "ok", 200
+
     if "message" in data:
         chat_id = str(data["message"]["chat"]["id"])
         text    = data["message"].get("text","").strip()
         key     = f"await_{chat_id}"
-     
+
         if key in _pending:
             sig_id = _pending.pop(key)
             try:
@@ -285,13 +333,19 @@ def telegram_update():
             except Exception:
                 send_message(chat_id, "Importe no valido. Escribe solo un numero (ej: 200)")
                 _pending[key] = sig_id; return "ok", 200
-            _do_order(chat_id, sig_id, amt)
+            if sig_id not in _pending:
+                send_message(chat_id, "⚠️ Señal expirada."); return "ok", 200
+            _pending_confirm[chat_id] = {"sig_id": sig_id, "usdt": amt}
+            send_confirm_buttons(chat_id, sig_id, _pending[sig_id], amt)
     return "ok", 200
         
 def _do_order(chat_id, sig_id, usdt):
+    if sig_id in _executed:
+        send_message(chat_id, "⚠️ Esta orden ya fue ejecutada."); return
+    _executed.add(sig_id)
     signal = _pending.pop(sig_id, None)
     if not signal:
-        send_message(chat_id, "Senal no encontrada."); return
+        send_message(chat_id, "Señal no encontrada."); return
     send_message(chat_id, f"Enviando orden a Bitget ({usdt} USDT)...")
     result = open_order(signal, usdt)
     if result["ok"]:
