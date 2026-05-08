@@ -170,7 +170,7 @@ def open_order(signal, usdt_amount):
         }
         resp = _post("/api/v2/mix/order/place-order", payload)
 
-else:
+    else:
         payload = {
             "planType": "normal_plan",
             "symbol": symbol,
