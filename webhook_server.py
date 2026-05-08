@@ -130,11 +130,15 @@ def open_order(signal, usdt_amount):
     order_type = signal.get("order_type", "market")
 
     _post("/api/v2/mix/account/set-margin-mode", {
-        "symbol": symbol, "productType": "USDT-FUTURES",
-        "marginCoin": "USDT", "marginMode": MARGIN_MODE,
+        "symbol": symbol,
+        "productType": "USDT-FUTURES",
+        "marginCoin": "USDT",
+        "marginMode": MARGIN_MODE,
     })
     _post("/api/v2/mix/account/set-leverage", {
-        "symbol": symbol, "productType": "USDT-FUTURES", "marginCoin": "USDT",
+        "symbol": symbol,
+        "productType": "USDT-FUTURES",
+        "marginCoin": "USDT",
         "leverage": str(LEVERAGE),
         "holdSide": "long" if direction == "LONG" else "short",
     })
@@ -148,67 +152,60 @@ def open_order(signal, usdt_amount):
     size     = max(round(raw_size / contract_size) * contract_size, contract_size)
     side     = "buy" if direction == "LONG" else "sell"
 
-    payload = {
-        "symbol":      symbol,
-        "productType": "USDT-FUTURES",
-        "marginMode":  MARGIN_MODE,
-        "marginCoin":  "USDT",
-        "size":        str(round(size, 6)),
-        "side":        side,
-        "tradeSide":   "open",
-        "force":       "gtc",
-        "presetStopSurplusPrice": str(tp_r),
-        "presetStopLossPrice":    str(sl_r),
-    }
+    print(f"[ORDER REQUEST] order_type={order_type} symbol={symbol} side={side} entry={entry_r} sl={sl_r} tp={tp_r} size={size}", flush=True)
 
     if order_type == "market":
-        payload["orderType"] = "market"
+        payload = {
+            "symbol": symbol,
+            "productType": "USDT-FUTURES",
+            "marginMode": MARGIN_MODE,
+            "marginCoin": "USDT",
+            "size": str(round(size, 6)),
+            "side": side,
+            "tradeSide": "open",
+            "force": "gtc",
+            "orderType": "market",
+            "presetStopSurplusPrice": str(tp_r),
+            "presetStopLossPrice": str(sl_r),
+        }
+        resp = _post("/api/v2/mix/order/place-order", payload)
+
     else:
-        payload["orderType"] = "limit"
-        payload["price"]     = str(entry_r)
-        payload["force"]     = "gtc"
+        payload = {
+            "planType": "normal_plan",
+            "symbol": symbol,
+            "productType": "USDT-FUTURES",
+            "marginMode": MARGIN_MODE,
+            "marginCoin": "USDT",
+            "size": str(round(size, 6)),
+            "side": side,
+            "tradeSide": "open",
+            "orderType": "market",
+            "triggerPrice": str(entry_r),
+            "triggerType": "mark_price",
+            "presetStopSurplusPrice": str(tp_r),
+            "presetStopLossPrice": str(sl_r),
+        }
+        resp = _post("/api/v2/mix/order/place-plan-order", payload)
 
-    # ── LOGGING COMPLETO ──────────────────────────────────────
-    print(f"[ORDER REQUEST] ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓", flush=True)
-    print(f"  order_type : {order_type}", flush=True)
-    print(f"  symbol     : {symbol}", flush=True)
-    print(f"  side       : {side}", flush=True)
-    print(f"  entry_r    : {entry_r}", flush=True)
-    print(f"  sl_r       : {sl_r}", flush=True)
-    print(f"  tp_r       : {tp_r}", flush=True)
-    print(f"  size       : {size}", flush=True)
-    print(f"  payload    : {json.dumps(payload)}", flush=True)
-    print(f"[ORDER REQUEST] ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑", flush=True)
-
-    resp = _post("/api/v2/mix/order/place-order", payload)
-
-    # ── LOGGING RESPUESTA COMPLETA ────────────────────────────
-    print(f"[ORDER RESPONSE] ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓", flush=True)
-    print(f"  {json.dumps(resp)}", flush=True)
-    print(f"[ORDER RESPONSE] ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑", flush=True)
+    print(f"[ORDER RESPONSE] {json.dumps(resp, ensure_ascii=False)}", flush=True)
 
     if resp.get("code") == "00000":
-        order_data = resp.get("data", {})
-        # Bitget a veces devuelve el tipo real de orden ejecutado
-        real_type = order_data.get("orderType", "?")
-        real_price = order_data.get("price", "?")
-        print(f"[ORDER OK] real_type={real_type} real_price={real_price} orderId={order_data.get('orderId','?')}", flush=True)
+        data = resp.get("data", {})
         return {
-            "ok":      True,
-            "orderId": order_data.get("orderId", "?"),
-            "symbol":  symbol,
-            "side":    direction,
-            "entry":   entry_r,
-            "sl":      sl_r,
-            "tp2":     tp_r,
-            "size":    size,
-            "usdt":    usdt_amount,
-            "type":    order_type,
+            "ok": True,
+            "orderId": data.get("orderId", "?"),
+            "symbol": symbol,
+            "side": direction,
+            "entry": entry_r,
+            "sl": sl_r,
+            "tp2": tp_r,
+            "size": size,
+            "usdt": usdt_amount,
+            "type": order_type,
         }
 
-    print(f"[ORDER ERROR] code={resp.get('code')} msg={resp.get('msg')}", flush=True)
     return {"ok": False, "error": resp.get("msg", str(resp))}
-
 
 # ── Telegram helpers ──────────────────────────────────────────
 def tg_post(method, payload):
