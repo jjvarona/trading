@@ -168,7 +168,7 @@ def open_order(signal, usdt_amount):
         payload["price"]     = str(entry_r)
 
     # FIX: log diagnostico para verificar que llega lo correcto a Bitget
-    print(f"[ORDER] type={order_type} entry_price={entry_r} sl={sl_r} tp={tp_r} size={size} side={side}")
+    print(f"[ORDER] type={order_type} entry_price={entry_r} sl={sl_r} tp={tp_r} size={size} side={side}", flush=True)
 
     resp = _post("/api/v2/mix/order/place-order", payload)
     if resp.get("code") == "00000":
@@ -440,8 +440,7 @@ def _do_order(chat_id, sig_id, usdt):
     if not signal:
         send_message(chat_id, "Señal no encontrada.")
         return
-    # FIX: log diagnostico antes de enviar a Bitget
-    print(f"[ORDER] type={signal.get('order_type')} entry_price={signal.get('entry_price')} bos_level={signal.get('bos_level')}")
+    print(f"[DO_ORDER] sig_id={sig_id} usdt={usdt} order_type={signal.get('order_type')} entry={signal.get('entry_price')} bos={signal.get('bos_level')}", flush=True)
     send_message(chat_id, f"Enviando orden a Bitget ({usdt} USDT)...")
     result = open_order(signal, usdt)
     if result["ok"]:
