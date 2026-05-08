@@ -170,7 +170,7 @@ def open_order(signal, usdt_amount):
         }
         resp = _post("/api/v2/mix/order/place-order", payload)
 
-    else:
+else:
         payload = {
             "planType": "normal_plan",
             "symbol": symbol,
@@ -183,8 +183,10 @@ def open_order(signal, usdt_amount):
             "orderType": "market",
             "triggerPrice": str(entry_r),
             "triggerType": "mark_price",
-            "presetStopSurplusPrice": str(tp_r),
-            "presetStopLossPrice": str(sl_r),
+            "stopSurplusPrice": str(tp_r),
+            "stopLossPrice": str(sl_r),
+            "stopSurplusTriggerType": "mark_price",
+            "stopLossTriggerType": "mark_price",
         }
         resp = _post("/api/v2/mix/order/place-plan-order", payload)
 
