@@ -166,15 +166,36 @@ def open_order(signal, usdt_amount):
     else:
         payload["orderType"] = "limit"
         payload["price"]     = str(entry_r)
+        payload["force"]     = "gtc"
 
-    # FIX: log diagnostico para verificar que llega lo correcto a Bitget
-    print(f"[ORDER] type={order_type} entry_price={entry_r} sl={sl_r} tp={tp_r} size={size} side={side}", flush=True)
+    # ── LOGGING COMPLETO ──────────────────────────────────────
+    print(f"[ORDER REQUEST] ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓", flush=True)
+    print(f"  order_type : {order_type}", flush=True)
+    print(f"  symbol     : {symbol}", flush=True)
+    print(f"  side       : {side}", flush=True)
+    print(f"  entry_r    : {entry_r}", flush=True)
+    print(f"  sl_r       : {sl_r}", flush=True)
+    print(f"  tp_r       : {tp_r}", flush=True)
+    print(f"  size       : {size}", flush=True)
+    print(f"  payload    : {json.dumps(payload)}", flush=True)
+    print(f"[ORDER REQUEST] ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑", flush=True)
 
     resp = _post("/api/v2/mix/order/place-order", payload)
+
+    # ── LOGGING RESPUESTA COMPLETA ────────────────────────────
+    print(f"[ORDER RESPONSE] ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓", flush=True)
+    print(f"  {json.dumps(resp)}", flush=True)
+    print(f"[ORDER RESPONSE] ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑", flush=True)
+
     if resp.get("code") == "00000":
+        order_data = resp.get("data", {})
+        # Bitget a veces devuelve el tipo real de orden ejecutado
+        real_type = order_data.get("orderType", "?")
+        real_price = order_data.get("price", "?")
+        print(f"[ORDER OK] real_type={real_type} real_price={real_price} orderId={order_data.get('orderId','?')}", flush=True)
         return {
             "ok":      True,
-            "orderId": resp["data"].get("orderId", "?"),
+            "orderId": order_data.get("orderId", "?"),
             "symbol":  symbol,
             "side":    direction,
             "entry":   entry_r,
@@ -184,6 +205,8 @@ def open_order(signal, usdt_amount):
             "usdt":    usdt_amount,
             "type":    order_type,
         }
+
+    print(f"[ORDER ERROR] code={resp.get('code')} msg={resp.get('msg')}", flush=True)
     return {"ok": False, "error": resp.get("msg", str(resp))}
 
 
