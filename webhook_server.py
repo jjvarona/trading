@@ -1,15 +1,16 @@
 from flask import Flask, request
 import requests, re, json, os, hmac, hashlib, base64, time, math
+print("webhook_server FIX ACTIVO")
 
 app = Flask(__name__)
 
 TELEGRAM_TOKEN      = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID    = os.environ.get("TELEGRAM_CHAT_ID", "")
 RENDER_URL          = os.environ.get("RENDER_URL", "")
-BITGET_API_KEY        = os.environ.get("BITGET_API_KEY", "")
-BITGET_API_SECRET     = os.environ.get("BITGET_API_SECRET", "")
+BITGET_API_KEY      = os.environ.get("BITGET_API_KEY", "")
+BITGET_API_SECRET   = os.environ.get("BITGET_API_SECRET", "")
 BITGET_API_PASSPHRASE = os.environ.get("BITGET_API_PASSPHRASE", "")
-LEVERAGE    = 20
+LEVERAGE   = 20
 MARGIN_MODE = "isolated"
 
 # ── Parser ────────────────────────────────────────────────────
@@ -24,11 +25,11 @@ def parse_alert(text):
         r"TP1\s*:\s*([\d.]+)[\s\S]*?"
         r"TP2\s*:\s*([\d.]+)[\s\S]*?"
         r"TP3\s*:\s*([\d.]+)",
-        text, re.IGNORECASE
-    )
+        text, re.IGNORECASE)
     if m:
         return {
-            "signal_type": "BOS_FORM", "order_type": "market",
+            "signal_type": "BOS_FORM",
+            "order_type": "pending",
             "direction": m.group(1).upper(), "symbol": m.group(2).upper(), "timeframe": m.group(3),
             "entry_price": float(m.group(4)), "bos_level": float(m.group(5)),
             "sl": float(m.group(6)), "tp1": float(m.group(7)), "tp2": float(m.group(8)), "tp3": float(m.group(9)),
@@ -42,8 +43,7 @@ def parse_alert(text):
         r"TP2:\s*([\d.]+)[\s\S]*?"
         r"TP3:\s*([\d.]+)[\s\S]*?"
         r"SL:\s*([\d.]+)",
-        text, re.IGNORECASE
-    )
+        text, re.IGNORECASE)
     if m2:
         return {
             "signal_type": "SENAL", "order_type": "market",
@@ -89,18 +89,6 @@ def get_contract_info(symbol):
     except Exception:
         return 0.001, 2
 
-def get_effective_leverage(symbol, direction):
-    try:
-        resp = _get(f"/api/v2/mix/account/account?symbol={symbol}&productType=USDT-FUTURES&marginCoin=USDT")
-        data = resp.get("data", {}) or {}
-        if direction == "LONG":
-            lev = data.get("fixedLongLeverage") or data.get("crossedMarginLeverage") or data.get("crossMaxLeverage") or LEVERAGE
-        else:
-            lev = data.get("fixedShortLeverage") or data.get("crossedMarginLeverage") or data.get("crossMaxLeverage") or LEVERAGE
-        return float(lev)
-    except Exception:
-        return float(LEVERAGE)
-
 def round_price(price, decimals):
     factor = 10 ** decimals
     return math.floor(price * factor) / factor
@@ -117,38 +105,68 @@ def open_order(signal, usdt_amount):
         "symbol": symbol, "productType": "USDT-FUTURES",
         "marginCoin": "USDT", "marginMode": MARGIN_MODE,
     })
-    _post("/api/v2/mix/account/set-leverage", {
-        "symbol": symbol, "productType": "USDT-FUTURES", "marginCoin": "USDT",
-        "leverage": str(LEVERAGE), "holdSide": "long" if direction == "LONG" else "short",
-    })
+
+    # Leer el leverage efectivo que Bitget aplica para este par
+    effective_leverage = float(LEVERAGE)  # fallback seguro ANTES del try
+    try:
+        lev_resp = _post("/api/v2/mix/account/set-leverage", {
+            "symbol": symbol, "productType": "USDT-FUTURES", "marginCoin": "USDT",
+            "leverage": str(LEVERAGE),
+            "holdSide": "long" if direction == "LONG" else "short",
+        })
+        effective_leverage = float(lev_resp["data"]["leverage"])
+    except Exception:
+        pass  # effective_leverage ya tiene el fallback
+    print(f"[LEVERAGE] requested={LEVERAGE} effective={effective_leverage}", flush=True)
 
     contract_size, price_dec = get_contract_info(symbol)
     entry_r = round_price(entry, price_dec)
-    sl_r    = round_price(sl,    price_dec)
-    tp_r    = round_price(tp,    price_dec)
+    sl_r    = round_price(sl, price_dec)
+    tp_r    = round_price(tp, price_dec)
 
     raw_size = (usdt_amount * effective_leverage) / entry_r
-    size = max(round(raw_size / contract_size) * contract_size, contract_size)
-    side = "buy" if direction == "LONG" else "sell"
+    size     = max(round(raw_size / contract_size) * contract_size, contract_size)
+    side     = "buy" if direction == "LONG" else "sell"
 
-    payload = {
-        "symbol": symbol, "productType": "USDT-FUTURES", "marginMode": MARGIN_MODE,
-        "marginCoin": "USDT", "size": str(round(size, 6)), "side": side,
-        "tradeSide": "open", "force": "gtc",
-        "presetStopSurplusPrice": str(tp_r),
-        "presetStopLossPrice":    str(sl_r),
-    }
+    print(f"[ORDER REQUEST] order_type={order_type} symbol={symbol} side={side} "
+          f"entry={entry_r} sl={sl_r} tp={tp_r} size={size} usdt={usdt_amount}", flush=True)
+
     if order_type == "market":
-        payload["orderType"] = "market"
+        payload = {
+            "symbol": symbol, "productType": "USDT-FUTURES",
+            "marginMode": MARGIN_MODE, "marginCoin": "USDT",
+            "size": str(round(size, 6)), "side": side,
+            "tradeSide": "open", "force": "gtc",
+            "orderType": "market",
+            "presetStopSurplusPrice": str(tp_r),
+            "presetStopLossPrice":    str(sl_r),
+        }
+        resp = _post("/api/v2/mix/order/place-order", payload)
     else:
-        payload["orderType"] = "limit"
-        payload["price"]     = str(entry_r)
+        payload = {
+            "planType": "normal_plan",
+            "symbol": symbol, "productType": "USDT-FUTURES",
+            "marginMode": MARGIN_MODE, "marginCoin": "USDT",
+            "size": str(round(size, 6)), "side": side,
+            "tradeSide": "open", "orderType": "market",
+            "triggerPrice": str(entry_r), "triggerType": "mark_price",
+            "stopSurplusPrice":        str(tp_r),
+            "stopLossPrice":           str(sl_r),
+            "stopSurplusTriggerType":  "mark_price",
+            "stopLossTriggerType":     "mark_price",
+        }
+        resp = _post("/api/v2/mix/order/place-plan-order", payload)
 
-    resp = _post("/api/v2/mix/order/place-order", payload)
+    print(f"[ORDER RESPONSE] {json.dumps(resp, ensure_ascii=False)}", flush=True)
+
     if resp.get("code") == "00000":
-        return {"ok": True, "orderId": resp["data"].get("orderId","?"),
-                "symbol": symbol, "side": direction, "entry": entry_r,
-                "sl": sl_r, "tp2": tp_r, "size": size, "usdt": usdt_amount, "type": order_type}
+        data = resp.get("data", {})
+        return {
+            "ok": True, "orderId": data.get("orderId", "?"),
+            "symbol": symbol, "side": direction,
+            "entry": entry_r, "sl": sl_r, "tp2": tp_r,
+            "size": size, "usdt": usdt_amount, "type": order_type,
+        }
     return {"ok": False, "error": resp.get("msg", str(resp))}
 
 # ── Telegram helpers ──────────────────────────────────────────
@@ -164,7 +182,7 @@ def send_buttons(chat_id, text, sig_id, direction):
         "chat_id": chat_id, "text": text, "parse_mode": "HTML",
         "reply_markup": {"inline_keyboard": [[
             {"text": f"{emoji} Abrir {direction}", "callback_data": f"open:{sig_id}"},
-            {"text": "❌ Cancelar",                "callback_data": f"cancel:{sig_id}"},
+            {"text": "❌ Cancelar", "callback_data": f"cancel:{sig_id}"},
         ]]}
     })
 
@@ -173,42 +191,39 @@ def send_entry_buttons(chat_id, text, sig_id):
         "chat_id": chat_id, "text": text, "parse_mode": "HTML",
         "reply_markup": {"inline_keyboard": [[
             {"text": "⚡ Entrada ahora", "callback_data": f"entry:{sig_id}:market"},
-            {"text": "🎯 Nivel BOS",     "callback_data": f"entry:{sig_id}:limit"},
-            {"text": "❌ Cancelar",      "callback_data": f"cancel:{sig_id}"},
+            {"text": "🎯 Nivel BOS",    "callback_data": f"entry:{sig_id}:limit"},
+            {"text": "❌ Cancelar",     "callback_data": f"cancel:{sig_id}"},
         ]]}
     })
 
 def send_amount_buttons(chat_id, sig_id):
     tg_post("sendMessage", {
         "chat_id": chat_id,
-        "text": "💰 <b>¿Cuántos USDT?</b>\nPulsa un botón o escribe el importe:",
+        "text": "💰 ¿Cuántos USDT?\nPulsa un botón o escribe el importe:",
         "parse_mode": "HTML",
         "reply_markup": {"inline_keyboard": [
-            [{"text":"50 USDT","callback_data":f"amount:{sig_id}:50"},
-             {"text":"100 USDT","callback_data":f"amount:{sig_id}:100"},
-             {"text":"200 USDT","callback_data":f"amount:{sig_id}:200"}],
-            [{"text":"500 USDT","callback_data":f"amount:{sig_id}:500"},
-             {"text":"1000 USDT","callback_data":f"amount:{sig_id}:1000"},
-             {"text":"✏️ Otro","callback_data":f"amount:{sig_id}:custom"}],
+            [{"text": "50 USDT",  "callback_data": f"amount:{sig_id}:50"},
+             {"text": "100 USDT", "callback_data": f"amount:{sig_id}:100"},
+             {"text": "200 USDT", "callback_data": f"amount:{sig_id}:200"}],
+            [{"text": "500 USDT",  "callback_data": f"amount:{sig_id}:500"},
+             {"text": "1000 USDT", "callback_data": f"amount:{sig_id}:1000"},
+             {"text": "✏️ Otro",   "callback_data": f"amount:{sig_id}:custom"}],
         ]}
     })
 
 def send_confirm_buttons(chat_id, sig_id, signal, usdt):
-    d = signal["direction"]
-    sym = signal["symbol"]
-    tf = signal["timeframe"]
+    d    = signal["direction"]; sym = signal["symbol"]; tf = signal["timeframe"]
     tipo = "LÍMITE en BOS" if signal.get("order_type") == "limit" else "MERCADO"
-    entry = signal["entry_price"]
-    sl = signal["sl"]; tp2 = signal["tp2"]
+    entry = signal["entry_price"]; sl = signal["sl"]; tp2 = signal["tp2"]
     e = "🟢" if d == "LONG" else "🔴"
     text = (
-        f"⚠️ <b>Confirmar orden</b>\n──────────────────\n"
+        f"⚠️ Confirmar orden\n──────────────────\n"
         f"{e} {d} · {sym} {tf}\n"
-        f"Tipo    : <b>{tipo}</b>\n"
+        f"Tipo    : {tipo}\n"
         f"Entrada : {entry}\n"
         f"SL      : {sl}\n"
         f"TP2     : {tp2}\n"
-        f"USDT    : <b>{usdt}</b>\n"
+        f"USDT    : {usdt}\n"
         f"──────────────────\n¿Confirmas?"
     )
     tg_post("sendMessage", {
@@ -240,13 +255,12 @@ def _next_id():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     raw = request.get_data(as_text=True)
-    print(f"[TV] {raw[:300]}")
+    print(f"[TV] {raw[:300]}", flush=True)
     signal = parse_alert(raw)
     if signal is None:
         send_message(TELEGRAM_CHAT_ID, raw)
         return "ok", 200
 
-    # Limpia solo el await y confirm activos, no las señales pendientes
     _pending.pop(f"await_{TELEGRAM_CHAT_ID}", None)
     _pending_confirm.pop(TELEGRAM_CHAT_ID, None)
 
@@ -258,13 +272,15 @@ def webhook():
     e = "🟢" if d == "LONG" else "🔴"
 
     if signal["signal_type"] == "BOS_FORM":
-        text = (f"⏳ <b>BOS FORM {d}</b> · {sym} {tf}\n──────────────────\n"
-                f"Entrada ahora : <b>{entry}</b>\nNivel BOS     : {signal['bos_level']}\n"
-                f"──────────────────\nSL  : {sl}\nTP1 : {tp1}\nTP2 : {tp2}\nTP3 : {tp3}")
+        text = (f"⏳ BOS FORM {d} · {sym} {tf}\n──────────────────\n"
+                f"Entrada ahora : {entry}\nNivel BOS     : {signal['bos_level']}\n"
+                f"──────────────────\n"
+                f"SL  : {sl}\nTP1 : {tp1}\nTP2 : {tp2}\nTP3 : {tp3}\n"
+                f"──────────────────\nOrden: MERCADO")
         send_entry_buttons(TELEGRAM_CHAT_ID, text, sig_id)
     else:
-        text = (f"{e} <b>SEÑAL {d}</b> · {sym} {tf}\nScore: {signal.get('score',0)}/100\n"
-                f"──────────────────\nEntrada : <b>{entry}</b>\nSL  : {sl}\n"
+        text = (f"{e} SEÑAL {d} · {sym} {tf}\nScore: {signal.get('score', 0)}/100\n"
+                f"──────────────────\nEntrada : {entry}\nSL      : {sl}\n"
                 f"TP1 : {tp1}\nTP2 : {tp2}\nTP3 : {tp3}")
         send_buttons(TELEGRAM_CHAT_ID, text, sig_id, d)
     return "ok", 200
@@ -273,10 +289,13 @@ def webhook():
 @app.route("/telegram", methods=["POST"])
 def telegram_update():
     data = request.get_json(silent=True) or {}
+
     if "callback_query" in data:
-        cb = data["callback_query"]
-        cb_id = cb["id"]; chat_id = str(cb["message"]["chat"]["id"])
-        msg_id = cb["message"]["message_id"]; parts = cb.get("data","").split(":")
+        cb      = data["callback_query"]
+        cb_id   = cb["id"]
+        chat_id = str(cb["message"]["chat"]["id"])
+        msg_id  = cb["message"]["message_id"]
+        parts   = cb.get("data", "").split(":")
 
         if parts[0] == "entry":
             sig_id = parts[1]; entry_type = parts[2]
@@ -322,7 +341,7 @@ def telegram_update():
 
         elif parts[0] == "confirm":
             sig_id = parts[1]
-            entry = _pending_confirm.get(chat_id)
+            entry  = _pending_confirm.get(chat_id)
             if not entry or entry["sig_id"] != sig_id:
                 answer_cb(cb_id, "⚠️ Confirmación expirada"); return "ok", 200
             answer_cb(cb_id, "Enviando...")
@@ -334,24 +353,22 @@ def telegram_update():
             answer_cb(cb_id, "❌ Cancelado")
             edit_msg(chat_id, msg_id, cb["message"]["text"] + "\n\n❌ Cancelado")
 
-        return "ok", 200
-
-    if "message" in data:
+    elif "message" in data:
         chat_id = str(data["message"]["chat"]["id"])
-        text    = data["message"].get("text","").strip()
+        text    = data["message"].get("text", "").strip()
         key     = f"await_{chat_id}"
-
         if key in _pending:
             sig_id = _pending.pop(key)
             try:
-                amt = float(text.replace(",",".")); assert amt > 0
+                amt = float(text.replace(",", ".")); assert amt > 0
             except Exception:
-                send_message(chat_id, "Importe no valido. Escribe solo un numero (ej: 200)")
+                send_message(chat_id, "Importe no válido. Escribe solo un número (ej: 200)")
                 _pending[key] = sig_id; return "ok", 200
             if sig_id not in _pending:
                 send_message(chat_id, "⚠️ Señal expirada."); return "ok", 200
             _pending_confirm[chat_id] = {"sig_id": sig_id, "usdt": amt}
             send_confirm_buttons(chat_id, sig_id, _pending[sig_id], amt)
+
     return "ok", 200
 
 def _do_order(chat_id, sig_id, usdt):
@@ -361,28 +378,30 @@ def _do_order(chat_id, sig_id, usdt):
     signal = _pending.pop(sig_id, None)
     if not signal:
         send_message(chat_id, "Señal no encontrada."); return
+    print(f"[DO_ORDER] sig_id={sig_id} usdt={usdt} order_type={signal.get('order_type')} "
+          f"entry={signal.get('entry_price')} bos={signal.get('bos_level')}", flush=True)
     send_message(chat_id, f"Enviando orden a Bitget ({usdt} USDT)...")
     result = open_order(signal, usdt)
     if result["ok"]:
-        e = "🟢" if result["side"] == "LONG" else "🔴"
+        e  = "🟢" if result["side"] == "LONG" else "🔴"
         tl = "LIMITE" if signal.get("order_type") == "limit" else "MERCADO"
         send_message(chat_id,
             f"{e} Orden {tl} enviada\n"
-            f"Par    : {result['symbol']}\nLado   : {result['side']}\n"
-            f"Entrada: {result['entry']}\nTamano : {result['size']} contratos\n"
-            f"USDT   : {result['usdt']}\nTP2    : {result['tp2']}\nSL     : {result['sl']}\n"
-            f"ID: {result['orderId']}")
+            f"Par     : {result['symbol']}\nLado    : {result['side']}\n"
+            f"Entrada : {result['entry']}\nTamaño  : {result['size']} contratos\n"
+            f"USDT    : {result['usdt']}\nTP2     : {result['tp2']}\nSL      : {result['sl']}\n"
+            f"ID      : {result['orderId']}")
     else:
-        send_message(chat_id, f"Error Bitget: {result['error']}")
+        send_message(chat_id, f"❌ Error Bitget: {result['error']}")
 
-@app.route("/ping",   methods=["GET"])
-def ping():   return "pong", 200
+@app.route("/ping", methods=["GET"])
+def ping(): return "pong", 200
 
-@app.route("/",       methods=["GET","HEAD"])
-def root():   return "ok", 200
+@app.route("/", methods=["GET", "HEAD"])
+def root(): return "ok", 200
 
 @app.route("/status", methods=["GET"])
-def status(): return {"status":"running","pending":len(_pending)}, 200
+def status(): return {"status": "running", "pending": len(_pending)}, 200
 
 def register_webhook():
     if not RENDER_URL or not TELEGRAM_TOKEN:
@@ -391,8 +410,8 @@ def register_webhook():
         r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook",
                           json={"url": f"{RENDER_URL}/telegram"}, timeout=10)
         print(f"[TG] setWebhook: {r.json()}")
-    except Exception as e:
-        print(f"[TG] error: {e}")
+    except Exception as ex:
+        print(f"[TG] error: {ex}")
 
 if __name__ == "__main__":
     register_webhook()
